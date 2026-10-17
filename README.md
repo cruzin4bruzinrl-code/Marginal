@@ -2,6 +2,14 @@
 
 Ekonomiapp (PWA) som låser pengar till räkningar, autogiro och Klarna och visar vad som är fritt till lön.
 
+## Driftsätt på Cloudflare Pages (gratis)
+
+1. dash.cloudflare.com → Workers & Pages → Create → Pages → Connect to Git → välj `marginal`.
+2. Build command: tomt. Build output directory: `/`. Spara och deploya.
+3. Settings → Variables and Secrets → lägg till `ANTHROPIC_API_KEY` (typ Secret). Deploya om.
+
+AI-funktionen ligger i `functions/api/scan.js`.
+
 ## Driftsätt på Netlify
 
 1. Dra hela mappen till Netlify (eller pusha till GitHub och koppla repot).
