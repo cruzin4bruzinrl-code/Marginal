@@ -1,5 +1,5 @@
 <!doctype html><html lang="sv"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
-<link rel="manifest" href="/manifest.webmanifest"><link rel="icon" href="/icon-192.png"><link rel="apple-touch-icon" href="/icon-192.png">
+<link rel="manifest" href="manifest.webmanifest"><link rel="icon" href="icon-192.png"><link rel="apple-touch-icon" href="icon-192.png">
 <meta name="description" content="Håll koll på räkningar, autogiro och Klarna. Se vad du kan spendera till lön.">
 <style>:root{padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}body{margin:0;font:14px system-ui,sans-serif}img{max-width:100%}[hidden]{display:none!important}</style>
 </head><body>
@@ -874,9 +874,19 @@ async function shrink(file){
   const c=document.createElement('canvas');c.width=Math.round(bmp.width*k);c.height=Math.round(bmp.height*k);c.getContext('2d').drawImage(bmp,0,0,c.width,c.height);
   const url=c.toDataURL('image/jpeg',.85);return {media_type:'image/jpeg',data:url.slice(url.indexOf(',')+1)};
 }
-async function apiScan(text,imgs){
+async function apiScan(text,imgs,prompt){
   const images=imgs?await Promise.all(imgs.map(shrink)):[];
-  const res=await fetch('/api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:text||'',images,today:iso(today0())})});
+  let key='';try{key=localStorage.getItem('marginal.key')||''}catch(e){}
+  let res;
+  if(key){ // testläge: direkt från webbläsaren med egen nyckel
+    const content=[...images.map(im=>({type:'image',source:{type:'base64',media_type:im.media_type,data:im.data}})),{type:'text',text:text?prompt+'\n\nTEXT:\n'+text:prompt}];
+    res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'x-api-key':key,'anthropic-version':'2023-06-01','content-type':'application/json','anthropic-dangerous-direct-browser-access':'true'},
+      body:JSON.stringify({model:'claude-sonnet-5-5',max_tokens:4000,stream:true,messages:[{role:'user',content}]})});
+    if(res.status===401)throw {code:'bad_key'};
+  } else {
+    res=await fetch('api/scan',{method:'POST',headers:{'content-type':'application/json'},body:JSON.stringify({text:text||'',images,today:iso(today0())})});
+    if(res.status===404||res.status===405)throw {code:'no_server'};
+  }
   if(!res.ok){const code=res.status===429?'rate_limited':res.status===413?'image_rejected':'upstream_error';throw {code}}
   const rd=res.body.getReader(),dec=new TextDecoder();let buf='',acc='';
   for(;;){const {value,done}=await rd.read();if(done)break;buf+=dec.decode(value,{stream:true});
@@ -930,13 +940,13 @@ Regler:
   try{
     const batches=text?[null]:[];for(let i=0;i<files.length;i+=IMG.maxCount)batches.push(files.slice(i,i+IMG.maxCount));
     for(const imgs of batches){
-      const r=SAMPLE?await SAMPLE.json(text?prompt+'\n\nTEXT:\n'+text:prompt,imgs?{images:imgs}:{}):await apiScan(text,imgs);
+      const r=SAMPLE?await SAMPLE.json(text?prompt+'\n\nTEXT:\n'+text:prompt,imgs?{images:imgs}:{}):await apiScan(text,imgs,prompt);
       if(r&&typeof r.balance==='number')balance=r.balance;
       (r?.items||[]).forEach(it=>{if(it&&it.name&&+it.amount>0)items.push(it)});
     }
   }catch(e){
     $$('.thumb').forEach(t=>t.classList.remove('scan'));busy(false);
-    const msg={not_granted:'Du behöver tillåta att sidan använder Claude.',rate_limited:'För många skanningar just nu. Vänta en stund och försök igen.',image_rejected:'En bild gick inte att läsa. Välj en vanlig skärmbild (PNG eller JPG).',invalid_json:'AI:n svarade i fel format. Tryck Välj skärmbilder igen.'}[e?.code]||'Något gick fel. Försök igen om en stund.';
+    const msg={not_granted:'Du behöver tillåta att sidan använder Claude.',rate_limited:'För många skanningar just nu. Vänta en stund och försök igen.',image_rejected:'En bild gick inte att läsa. Välj en vanlig skärmbild (PNG eller JPG).',invalid_json:'AI:n svarade i fel format. Tryck Välj skärmbilder igen.',no_server:'AI är inte påslagen här än. Lägg in din AI-nyckel under Inställningar (kugghjulet).',bad_key:'AI-nyckeln stämmer inte. Kolla den under Inställningar.'}[e?.code]||'Något gick fel. Försök igen om en stund.';
     out.innerHTML=`<div class="alert bad"><div class="ic">${ICON.alert}</div><div><b>Skanningen misslyckades</b><span>${msg}</span></div></div>`;return}
   $$('.thumb').forEach(t=>t.classList.remove('scan'));busy(false);
   // ta bort dubbletter och sånt som redan finns
@@ -1006,9 +1016,10 @@ $('#setBtn').onclick=()=>{openSheet(`<h2>Inställningar</h2>
   <label>Lön efter skatt (kr)<input id="ss" type="number" value="${S.salary}"></label>
   <label>Lönedatum<input id="sp" type="number" min="1" max="31" value="${S.payday}"></label>
   <label>Buffert, alltid orörd (kr)<input id="sb" type="number" value="${S.buffer}"></label>
+  ${API?`<label>AI-nyckel (från console.anthropic.com)<input id="sk" type="password" autocomplete="off" placeholder="sk-ant-..." value="${(()=>{try{return localStorage.getItem('marginal.key')||''}catch(e){return ''}})()}"></label><p style="font-size:13px">Sparas bara i den här mobilen. Används för att läsa av skärmbilder.</p>`:''}
   <p style="font-size:13px">Lön på helg räknas till fredagen innan. Räkningar på helg dras nästa vardag.</p>
   <button class="btn wide" id="ssave">Spara</button><button class="btn ghost wide" id="sguide">Visa guiden igen</button><button class="btn ghost wide" id="sreset">Radera allt och börja om</button><div id="rc"></div>`);
-  $('#ssave').onclick=()=>{S.salary=+$('#ss').value||0;S.payday=Math.min(31,Math.max(1,+$('#sp').value||25));S.buffer=Math.max(0,+$('#sb').value||0);save();closeSheet();render();toast('Sparat')};
+  $('#ssave').onclick=()=>{if($('#sk'))try{localStorage.setItem('marginal.key',$('#sk').value.trim())}catch(e){};S.salary=+$('#ss').value||0;S.payday=Math.min(31,Math.max(1,+$('#sp').value||25));S.buffer=Math.max(0,+$('#sb').value||0);save();closeSheet();render();toast('Sparat')};
   $('#sguide').onclick=()=>guide(0);
   $('#sreset').onclick=()=>{$('#rc').innerHTML='<button class="btn danger wide" id="sr2">Ja, radera allt</button>';
     $('#sr2').onclick=()=>{S=freshState();save();closeSheet();render();go('hem');setTimeout(()=>guide(0),300)}}};
@@ -1109,5 +1120,5 @@ if(!S.onboarded)setTimeout(()=>guide(0),400);
 })();
 </script>
 
-<script>if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('/sw.js').catch(()=>{}));</script>
+<script>if('serviceWorker' in navigator)addEventListener('load',()=>navigator.serviceWorker.register('sw.js').catch(()=>{}));</script>
 </body></html>
